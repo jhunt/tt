@@ -1,0 +1,374 @@
+#!/usr/bin/perl
+
+use warnings;
+use strict;
+
+use POSIX qw(strftime);
+use Date::Parse qw(str2time);
+
+our $TT_FILE = "$ENV{HOME}/.timetrack";
+our $VERSION = "1.0";
+
+sub mkdate
+{
+	my ($y,$m,$d) = @_;
+	if ($y && $m && $d) {
+		return sprintf("%04s-%02s-%02s", $y, $m, $d);
+	}
+	if ($y) { # timestamp
+		return strftime("%Y-%m-%d", localtime($y));
+	}
+	undef;
+}
+
+sub skip_dst
+{
+	$_[0]+43200;
+}
+
+sub next_date
+{
+	return undef unless my $ts = str2time(shift);
+	mkdate(skip_dst($ts+86400));
+}
+
+sub match_date_range
+{
+	my ($from, $to) = @_;
+	return "^(".join("|", @{expand_date_range($from, $to)}).")";
+}
+
+sub expand_date_range
+{
+	my ($date, $end) = @_;
+	my @dates = ();
+
+	while ($date ne $end) {
+		push @dates, $date;
+		$date = next_date($date);
+	}
+	push @dates, $end;
+	return \@dates;
+}
+
+sub parse_date_range
+{
+	my ($from, $to) = split(/:/, shift);
+	$from = parse_date($from);
+	return unless $from;
+
+	return ($from, $from) unless $to;
+
+	my $end = parse_date($to);
+	return ($from, $end) if $end;
+
+	if ($to =~ m/^\d+$/) {
+		$end = next_date($from) until $end =~ m/-$to$/;
+		return ($from, $end);
+	}
+
+	if ($to =~ m/^[+-]\d+$/) {
+		my $ts = str2time($from);
+		$end = mkdate(skip_dst($ts+($to*86400)));
+		return ($to > 0 ? ($from, $end) : ($end, $from));
+	}
+}
+
+sub time_stat
+{
+	my @st = stat $TT_FILE or return undef;
+	return int((time - $st[9]) / 60 + 0.5);
+}
+
+sub parse_time
+{
+	my $str = shift;
+	return 0 unless $str;
+	return $str if $str =~ m/^\d+$/;
+
+	if ($str eq "s") {
+		return time_stat;
+	}
+
+	if ($str =~ m/^((\d+(\.\d+)?)h)?((\d+)m)?$/) {
+		return ($2||0)*60 + ($5||0);
+	}
+
+	if ($str =~ m/^((\d+)m)?((\d+(\.\d+)?)h)?$/) {
+		return ($4||0)*60 + ($2||0);
+	}
+
+	undef;
+}
+
+sub parse_date
+{
+	my $str = shift;
+	if ($str =~ m/^(\d+)([dw])$/) {
+		my $offset = 0;
+		$offset = 86400   if $2 eq 'd';
+		$offset = 86400*7 if $2 eq 'w';
+		return mkdate(time-$offset*$1);
+	}
+	if ($str =~ m/^(\d\d\d\d)-(\d+)-(\d+)$/) {
+		return mkdate($1,$2,$3);
+	}
+
+	if ($str =~ m|^(\d+)/(\d+)/(\d\d\d\d)$|) {
+		return mkdate($3,$1,$2);
+	}
+
+	if ($str =~ m/^((Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))\s+(\d+)\s+(\d\d\d\d)/) {
+		my %MONTHS = (
+			Jan =>  1, Feb =>  2, Mar =>  3, Apr =>  4,
+			May =>  5, Jun =>  6, Jul =>  7, Aug =>  8,
+			Sep =>  9, Oct => 10, Nov => 11, Dec => 12
+		);
+		return mkdate($3,$MONTHS{$1},$2);
+	}
+
+	# FIXME: handle relative date of "last <dayname>"
+}
+
+sub track
+{
+	my ($date, $type, $time, $comment) = @_;
+	$comment =~ s/\n/.  /;
+	open TT, ">>", $TT_FILE or die "$TT_FILE: $!\n";
+	print TT "$date $type ", sprintf("%3i", $time), " $comment\n";
+	close TT;
+}
+
+sub extract
+{
+	my $regex = qr/$_[0]/;
+	my $res = {};
+
+	open TT, "<", $TT_FILE or die "$TT_FILE: $!\n";
+	while (<TT>) {
+		next unless $_ =~ $regex;
+		chomp;
+		# Key by first subgroup match
+		push @{$res->{$1}}, $_;
+	}
+
+	return $res;
+}
+
+sub sum_totals
+{
+	my ($lines) = @_;
+
+	my $total = {};
+	for (@$lines) {
+		next unless m/^\d\d\d\d-\d\d-\d\d\s+(.)\s+(\d+)/;
+		next unless $2 > 0;
+		$total->{$1} += $2;
+	}
+	return $total;
+}
+
+sub sum_details
+{
+	my ($lines, $pre) = @_;
+	$pre = $pre || "";
+
+	for (@$lines) {
+		next unless m/^\d\d\d\d-\d\d-\d\d\s(.*)$/;
+		print "$pre$1\n";
+	}
+}
+
+#########################################################
+
+use Getopt::Long;
+Getopt::Long::Configure("bundling");
+
+sub debug1
+{
+	map { print STDERR "DEBUG> $_\n" } @_;
+	print STDERR "\n";
+}
+sub debug0 { }
+
+sub usage
+{
+	(my $bin = $0) =~ s|.*/||;
+	print "USAGE: $bin T 99 summary of what you did\n",
+	      "       $bin [OPTIONS]\n",
+	      "$bin -h for help\n";
+	exit shift;
+}
+
+sub help
+{
+	print <<EOF;
+tt - dead-simple time tracking
+Copyright (c) 2012 James Hunt <james\@niftylogic.com>
+Based on the 'no magic' attitude of Russ Crandall
+
+Basic Usage:
+  tt [TYPE] [MINUTES] [COMMENT]
+  tt
+
+Advanced Usage:
+  tt [OPTIONS]
+
+  OPTIONS
+  --help, -h
+      Show this helpful help message
+
+  --summary, -s <period>
+      Report tracked time in a date range or named
+      reporting period.
+
+      Periods:   day, week, mtd
+      Arbitrary: YYYY-MM-DD:YYYY-MM-DD
+                 YYYY-MM-DD:+N
+                 YYYY-MM-DD:DD
+
+  --full, -f
+      Show details in --summary.  Ignored otherwise.
+
+  --date, -d YYYY-MM-DD
+      Use specified date as reference point.
+
+  --sync
+      Synchronize time tracked data to central server.
+      Requires more infrastructure and some config.
+
+  --config, -C /path/to/tt.conf
+      Use alternate configuration file.
+      Default is ~/.ttrc, then /etc/tt.conf
+
+EOF
+}
+
+my %opt = ();
+GetOptions(\%opt,
+	'help|h',
+	'debug|v',     # undocumented
+	'summary|s=s',
+	'full|f',
+	'date|d=s',
+	'sync',        # NOT IMPL
+	'mark|m',      # NOT IMPL
+	'config|C',    # NOT IMPL
+) or usage(1);
+
+*debug = $opt{debug} ? \&debug1 : \&debug0;
+
+if ($opt{help}) {
+	help;
+	exit 0;
+}
+
+debug("tt v$VERSION starting up");
+
+if ($opt{config}) {
+	print STDERR "warning: config is not yet implemented.\n";
+	exit 1;
+}
+
+if ($opt{mark}) {
+	my $comment = join(" ", @ARGV);
+	track(mkdate(time), "a", 0, "ttmark: $comment");
+	exit 0;
+}
+
+# Set the reference point date
+#
+if (exists $opt{date}) {
+	my $date = parse_date($opt{date});
+	$date or die "$opt{date}: not a valid date spec.\n";
+	$opt{date} = $date;
+} else {
+	$opt{date} = mkdate(time);
+}
+
+if ($opt{sync}) {
+	print STDERR "warning: sync is not implemented yet.\n";
+	exit 1;
+}
+
+if ($opt{summary}) {
+
+	# Date range of summary
+	my ($from, $to);
+
+	# Process named summation periods
+	#
+	if ($opt{summary} eq "mtd") {
+		$opt{date} =~ m/(\d+)$/;
+		my $mday = $1-1;
+		($from, $to) = parse_date_range("$opt{date}:-$mday");
+
+	} elsif ($opt{summary} eq "week") {
+		($from, $to) = parse_date_range("$opt{date}:-7");
+
+	} elsif ($opt{summary} eq "day") {
+		($from, $to) = ($opt{date}, $opt{date});
+
+	} else {
+		($from, $to) = parse_date_range($opt{summary});
+	}
+
+	debug("summary period is $opt{summary}");
+	debug("from: $from", "to:   $to");
+
+	my $dates = expand_date_range($from, $to);
+	my $log = extract(match_date_range($from, $to));
+
+	for (@$dates) {
+		print "$_:\n";
+		if ($opt{full}) {
+			print "\n";
+			sum_details($log->{$_}, "... ");
+			print "\n";
+		}
+
+		my $total = sum_totals($log->{$_});
+		my $n = 0;
+		for my $t (keys %$total) {
+			print "   $t    $total->{$t}\n";
+			$n += $total->{$t};
+		}
+		if ($n) {
+			print "        ---------\n";
+			print "        $n\n\n";
+		} else {
+			print "No time tracking data.\n\n";
+		}
+	}
+	exit 0;
+}
+
+debug("\@argv == ".@ARGV);
+debug(map { "argv[]: $_" } @ARGV);
+
+if (@ARGV == 0) {
+	print "$opt{date}:\n";
+	my $lines = extract("^($opt{date})\\s");
+	sum_details($lines->{$opt{date}});
+
+	my $since = time_stat;
+	defined($since) or die "Cannot stat $TT_FILE: $!\n";
+	print "--- last updated $since minutes ago ---\n";
+	exit 0;
+
+} elsif (@ARGV >= 3) {
+	my ($type, $time_s, @rest) = @ARGV;
+	my $comment = join(" ", @rest);
+
+	my $time = parse_time($time_s);
+	if (!$time) {
+		die "$time_s: does not look like a valid time spec\n";
+	}
+
+	track($opt{date}, $type, $time, $comment);
+	exit 0;
+
+} else {
+	usage(1);
+}
+
