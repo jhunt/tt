@@ -5,6 +5,7 @@ use strict;
 
 use POSIX qw(strftime);
 use Date::Parse qw(str2time);
+use YAML qw(LoadFile);
 
 our $TT_FILE = "$ENV{HOME}/.timetrack";
 if ($ENV{TTDEV}) { $TT_FILE = "./.timetrack" }
@@ -320,24 +321,27 @@ if ($opt{help}) {
 
 debug("tt v$VERSION starting up");
 
+my $CFG = undef;
 if ($opt{config}) {
-	print STDERR "warning: config is not yet implemented.\n";
-	exit 1;
+	eval {
+		$CFG = LoadFile($opt{config})
+	} or do {
+		die "Failed to load config '$opt{config}': $@\n";
+	};
 }
+eval { $CFG = LoadFile("$ENV{HOME}/.ttrc"); } unless $CFG;
+eval { $CFG = LoadFile("/etc/tt.conf"); } unless $CFG;
+$CFG = {} unless $CFG;
 
-if ($opt{edit}) {
-	exec '/bin/sh -c "$EDITOR '.$TT_FILE.'"';
-}
+$TT_FILE = $CFG->{ttfile} || "$ENV{HOME}/.timetrack";
 
 if ($opt{prompt}) {
-	my $since = time_stat;
-	if (defined $since) {
-		print "${since}m";
-	} else {
-		print "unk";
-	}
+	my $since;
+	print defined($since = time_stat) ? "${since}m" : "??";
 	exit 0;
 }
+
+exec '/bin/sh -c "$EDITOR '.$TT_FILE.'"' if $opt{edit};
 
 if ($opt{mark}) {
 	my $comment = join(" ", @ARGV);
