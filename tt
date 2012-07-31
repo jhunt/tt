@@ -30,6 +30,28 @@ sub mkdate
 	undef;
 }
 
+sub prev_weekday
+{
+	my ($date, $target) = @_;
+
+	my %DAYS = (
+		Sun => 0, Mon => 1, Tue => 2, Wed => 3,
+		Thu => 4, Fri => 5, Sat => 6
+	);
+	my $ts = $_[0];
+	if ($ts !~ m/^\d+$/) {
+		$ts = str2time($ts);
+	}
+	my $wday = strftime("%a", localtime($ts));
+	return unless exists $DAYS{$wday};
+	$wday = $DAYS{$wday};
+
+	my $offset = $target - $wday;
+	$offset -= 7 if $offset > 0;
+
+	return mkdate($ts + (86400*$offset));
+}
+
 sub skip_dst
 {
 	$_[0]+43200;
@@ -380,7 +402,9 @@ if ($opt{month}) {
 } elsif ($opt{week}) {
 	$period = "week";
 	$expect = 2400; # minutes in a 40h week
-	($from, $to) = parse_date_range("$opt{date}:-7");
+	my $prev = prev_weekday($opt{date}, 0)
+		or die "Cannot determine Sunday before $opt{date}\n";
+	($from, $to) = parse_date_range("$prev:+6");
 
 } elsif ($opt{range}) {
 	($from, $to) = parse_date_range($opt{range});
