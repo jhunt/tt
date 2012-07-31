@@ -7,6 +7,7 @@ use POSIX qw(strftime);
 use Date::Parse qw(str2time);
 
 our $TT_FILE = "$ENV{HOME}/.timetrack";
+if ($ENV{TTDEV}) { $TT_FILE = "./.timetrack" }
 our $VERSION = "1.0";
 
 sub rjust
@@ -245,6 +246,7 @@ GetOptions(\%opt,
 	'help|h',
 	'debug|v',     # undocumented
 	'summary|s',
+	'breakout|b',
 	'full|f',
 	'date|d=s',
 	'edit|e',
@@ -407,6 +409,47 @@ if ($opt{summary}) {
 		print_lines($log->{$_}) if $opt{full};
 	}
 	print_totals($grand_total, $expect);
+	exit 0;
+}
+
+sub bnum
+{
+	my $t = shift;
+	return " - " if !$t or $t < 3;
+	return sprintf("%.1f", ($t||0)/60.0);
+}
+
+if ($opt{breakout}) {
+	$opt{summary} = 1;
+
+	print rjust("$from - $to\n", 45);
+	print "\n";
+	print " Date          p     i     t     a     Total\n";
+	print "--------------------------------------------\n";
+
+	my $dates = expand_date_range($from, $to);
+	my $log = extract(match_date_range($from, $to));
+
+	my $total = {};
+	my $S = 0;
+	for (@$dates) {
+		my $T = sum_totals($log->{$_});
+		my $sum = 0;
+		for my $k (keys %$T) {
+			$total->{$k} += $T->{$k};
+			$sum += $T->{$k};
+			$S   += $T->{$k};
+		}
+		print sprintf("%s  %5s %5s %5s %5s  %7s\n",
+			$_, bnum($T->{p}), bnum($T->{i}), bnum($T->{t}), bnum($T->{a}), bnum($sum));
+	}
+
+	print "--------------------------------------------\n";
+	my $T = $total;
+	print sprintf("     Total: %5s %5s %5s %5s  %7s\n",
+		bnum($T->{p}), bnum($T->{i}), bnum($T->{t}), bnum($T->{a}), bnum($S));
+	print "--------------------------------------------\n";
+	print "               p     i     t     a     Total\n";
 	exit 0;
 }
 
