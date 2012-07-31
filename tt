@@ -9,6 +9,13 @@ use Date::Parse qw(str2time);
 our $TT_FILE = "$ENV{HOME}/.timetrack";
 our $VERSION = "1.0";
 
+sub rjust
+{
+	my ($s, $n, $fill) = @_;
+	$fill = $fill || ' ';
+	return ($fill x ($n - length $s)) . $s;
+}
+
 sub mkdate
 {
 	my ($y,$m,$d) = @_;
@@ -168,17 +175,6 @@ sub sum_totals
 	return $total;
 }
 
-sub sum_details
-{
-	my ($lines, $pre) = @_;
-	$pre = $pre || "";
-
-	for (@$lines) {
-		next unless m/^\d\d\d\d-\d\d-\d\d\s(.*)$/;
-		print "$pre$1\n";
-	}
-}
-
 #########################################################
 
 use Getopt::Long;
@@ -248,13 +244,69 @@ my %opt = ();
 GetOptions(\%opt,
 	'help|h',
 	'debug|v',     # undocumented
-	'summary|s=s',
+	'summary|s',
 	'full|f',
 	'date|d=s',
+	'edit|e',
 	'sync',        # NOT IMPL
-	'mark|m',      # NOT IMPL
+	'mark',
 	'config|C',    # NOT IMPL
+
+	'week|w',
+	'month|m',
+	'range|r=s',
 ) or usage(1);
+
+sub print_lines
+{
+	my $lines = shift;
+	for (@$lines) {
+		print "$_\n";
+	}
+	print "\n" if @$lines;
+}
+
+sub print_totals_bare
+{
+	my ($total) = @_;
+
+	print " Type    Min     Hrs  \n";
+	print "---------------------\n";
+	my $sum = 0;
+	for my $k (keys %$total) {
+		print sprintf("%4s: %6i %6.1fh\n",
+			$k, $total->{$k}, $total->{$k}/60.0);
+		$sum += $total->{$k};
+	}
+	print "---------------------\n";
+	print sprintf(" Sum: %6i %6.1fh\n",
+		$sum, $sum/60.0);
+}
+
+sub print_totals
+{
+	my ($total, $expected) = @_;
+	return print_totals_bare($total) unless $expected;
+
+	print " Type    Min     Hrs        %\n";
+	print "-----------------------------\n";
+	my $sum = 0;
+	for my $k (keys %$total) {
+		print sprintf("%4s: %6i %6.1fh  %6.2f%%\n",
+			$k, $total->{$k}, $total->{$k}/60.0, $total->{$k}*100.0/$expected);
+		$sum += $total->{$k};
+	}
+	print "-----------------------------\n";
+	print sprintf(" Sum: %6i %6.1fh  %6.2f%% (of %0.1fh)\n",
+		$sum, $sum/60.0, $sum*100.0/$expected, $expected/60.0);
+}
+
+sub summarize
+{
+	my $lines = shift;
+	print_lines($lines) if !$opt{summary} || $opt{full};
+	print_totals(sum_totals($lines), 480);
+}
 
 *debug = $opt{debug} ? \&debug1 : \&debug0;
 
@@ -268,6 +320,10 @@ debug("tt v$VERSION starting up");
 if ($opt{config}) {
 	print STDERR "warning: config is not yet implemented.\n";
 	exit 1;
+}
+
+if ($opt{edit}) {
+	exec '/bin/sh -c "$EDITOR '.$TT_FILE.'"';
 }
 
 if ($opt{mark}) {
@@ -291,55 +347,55 @@ if ($opt{sync}) {
 	exit 1;
 }
 
+# Date range of summary
+my ($from, $to);
+
+# Process named summation periods
+#
+my $period = "custom";
+my $expect = undef;
+if ($opt{month}) {
+	$period = "month";
+	$opt{date} =~ m/(\d+)$/;
+	my $mday = $1-1;
+	($from, $to) = parse_date_range("$opt{date}:-$mday");
+
+} elsif ($opt{week}) {
+	$period = "week";
+	$expect = 2400; # minutes in a 40h week
+	($from, $to) = parse_date_range("$opt{date}:-7");
+
+} elsif ($opt{range}) {
+	($from, $to) = parse_date_range($opt{range});
+
+} else {
+	$expect = 480; # minutes in an 8 hour day
+	($from, $to) = ($opt{date}, $opt{date});
+}
+
+debug("summary period is $period");
+debug("from: $from", "to:   $to");
+
 if ($opt{summary}) {
 
-	# Date range of summary
-	my ($from, $to);
-
-	# Process named summation periods
-	#
-	if ($opt{summary} eq "mtd") {
-		$opt{date} =~ m/(\d+)$/;
-		my $mday = $1-1;
-		($from, $to) = parse_date_range("$opt{date}:-$mday");
-
-	} elsif ($opt{summary} eq "week") {
-		($from, $to) = parse_date_range("$opt{date}:-7");
-
-	} elsif ($opt{summary} eq "day") {
-		($from, $to) = ($opt{date}, $opt{date});
-
+	print "Time Tracking Report\n";
+	if ($from eq $to) {
+		print "  for $from\n\n";
 	} else {
-		($from, $to) = parse_date_range($opt{summary});
+		print "  $from - $to\n\n";
 	}
-
-	debug("summary period is $opt{summary}");
-	debug("from: $from", "to:   $to");
-
 	my $dates = expand_date_range($from, $to);
 	my $log = extract(match_date_range($from, $to));
 
+	my $grand_total = {};
 	for (@$dates) {
-		print "$_:\n";
-		if ($opt{full}) {
-			print "\n";
-			sum_details($log->{$_}, "... ");
-			print "\n";
-		}
-
 		my $total = sum_totals($log->{$_});
-		my $n = 0;
-		for my $t (keys %$total) {
-			print "   $t    $total->{$t}\n";
-			$n += $total->{$t};
+		for (keys %$total) {
+			$grand_total->{$_} += $total->{$_};
 		}
-		if ($n) {
-			print "        ---------\n";
-			print "        $n\n\n";
-		} else {
-			print "No time tracking data.\n\n";
-		}
+		print_lines($log->{$_}) if $opt{full};
 	}
+	print_totals($grand_total, $expect);
 	exit 0;
 }
 
@@ -347,13 +403,12 @@ debug("\@argv == ".@ARGV);
 debug(map { "argv[]: $_" } @ARGV);
 
 if (@ARGV == 0) {
-	print "$opt{date}:\n";
 	my $lines = extract("^($opt{date})\\s");
-	sum_details($lines->{$opt{date}});
+	summarize($lines->{$opt{date}});
+	print "\n";
 
 	my $since = time_stat;
-	defined($since) or die "Cannot stat $TT_FILE: $!\n";
-	print "--- last updated $since minutes ago ---\n";
+	defined($since) and print rjust(" updated $since min. ago ---\n", 30, '-');
 	exit 0;
 
 } elsif (@ARGV >= 3) {
