@@ -471,6 +471,17 @@ if (@ARGV == 0) {
 	my ($type, $time_s, @rest) = @ARGV;
 	my $comment = join(" ", @rest);
 
+	if ($type !~ m/^[Ppita]$/) {
+		print "Oops... bad task type ($type)\nChoose one of:\n";
+		print "  P  PTO\n";
+		print "  p  Project\n";
+		print "  i  Incident\n";
+		print "  t  Task\n";
+		print "  a  Admin\n";
+		print "\n";
+		exit 1;
+	}
+
 	my $time = parse_time($time_s);
 	if (!$time) {
 		die "$time_s: does not look like a valid time spec\n";
