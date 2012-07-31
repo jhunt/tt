@@ -277,7 +277,7 @@ GetOptions(\%opt,
 	'sync',        # NOT IMPL
 	'mark|M',
 	'config|C',    # NOT IMPL
-
+	'kill|x',
 	'week|w',
 	'month|m',
 	'range|r=s',
@@ -365,6 +365,7 @@ if ($opt{prompt}) {
 }
 
 exec '/bin/sh -c "$EDITOR '.$TT_FILE.'"' if $opt{edit};
+exec "/bin/touch $TT_FILE" if $opt{kill};
 
 if ($opt{mark}) {
 	my $comment = join(" ", @ARGV);
