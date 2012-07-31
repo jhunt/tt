@@ -251,7 +251,7 @@ GetOptions(\%opt,
 	'date|d=s',
 	'edit|e',
 	'sync',        # NOT IMPL
-	'mark',
+	'mark|M',
 	'config|C',    # NOT IMPL
 
 	'week|w',
