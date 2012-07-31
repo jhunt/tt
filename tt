@@ -255,6 +255,7 @@ GetOptions(\%opt,
 	'week|w',
 	'month|m',
 	'range|r=s',
+	'prompt',
 ) or usage(1);
 
 sub print_lines
@@ -324,6 +325,16 @@ if ($opt{config}) {
 
 if ($opt{edit}) {
 	exec '/bin/sh -c "$EDITOR '.$TT_FILE.'"';
+}
+
+if ($opt{prompt}) {
+	my $since = time_stat;
+	if (defined $since) {
+		print "${since}m";
+	} else {
+		print "unk";
+	}
+	exit 0;
 }
 
 if ($opt{mark}) {
