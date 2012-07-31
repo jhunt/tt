@@ -11,6 +11,11 @@ our $TT_FILE = "$ENV{HOME}/.timetrack";
 if ($ENV{TTDEV}) { $TT_FILE = "./.timetrack" }
 our $VERSION = "1.0";
 
+my %DAYS = (
+	Sun => 0, Mon => 1, Tue => 2, Wed => 3,
+	Thu => 4, Fri => 5, Sat => 6
+);
+
 sub rjust
 {
 	my ($s, $n, $fill) = @_;
@@ -34,10 +39,6 @@ sub prev_weekday
 {
 	my ($date, $target) = @_;
 
-	my %DAYS = (
-		Sun => 0, Mon => 1, Tue => 2, Wed => 3,
-		Thu => 4, Fri => 5, Sat => 6
-	);
 	my $ts = $_[0];
 	if ($ts !~ m/^\d+$/) {
 		$ts = str2time($ts);
@@ -402,7 +403,7 @@ if ($opt{month}) {
 } elsif ($opt{week}) {
 	$period = "week";
 	$expect = 2400; # minutes in a 40h week
-	my $prev = prev_weekday($opt{date}, 0)
+	my $prev = prev_weekday($opt{date}, $DAYS{$CFG->{weekstart} || 'Sun'})
 		or die "Cannot determine Sunday before $opt{date}\n";
 	($from, $to) = parse_date_range("$prev:+6");
 
