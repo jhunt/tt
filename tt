@@ -424,8 +424,8 @@ if ($opt{breakout}) {
 
 	print rjust("$from - $to\n", 45);
 	print "\n";
-	print " Date          p     i     t     a     Total\n";
-	print "--------------------------------------------\n";
+	print " Date          P     p     i     t     a      ALL\n";
+	print "--------------------------------------------------\n";
 
 	my $dates = expand_date_range($from, $to);
 	my $log = extract(match_date_range($from, $to));
@@ -440,16 +440,18 @@ if ($opt{breakout}) {
 			$sum += $T->{$k};
 			$S   += $T->{$k};
 		}
-		print sprintf("%s  %5s %5s %5s %5s  %7s\n",
-			$_, bnum($T->{p}), bnum($T->{i}), bnum($T->{t}), bnum($T->{a}), bnum($sum));
+		print sprintf("%s  %5s %5s %5s %5s %5s %7s\n",
+			$_, bnum($T->{P}), bnum($T->{p}), bnum($T->{i}),
+			    bnum($T->{t}), bnum($T->{a}), bnum($sum));
 	}
 
-	print "--------------------------------------------\n";
+	print "--------------------------------------------------\n";
 	my $T = $total;
-	print sprintf("     Total: %5s %5s %5s %5s  %7s\n",
-		bnum($T->{p}), bnum($T->{i}), bnum($T->{t}), bnum($T->{a}), bnum($S));
-	print "--------------------------------------------\n";
-	print "               p     i     t     a     Total\n";
+	print sprintf("     Total: %5s %5s %5s %5s %5s %7s\n",
+		bnum($T->{P}), bnum($T->{p}), bnum($T->{i}),
+		bnum($T->{t}), bnum($T->{a}), bnum($S));
+	print "--------------------------------------------------\n";
+	print "               P     p     i     t     a      ALL\n";
 	exit 0;
 }
 
