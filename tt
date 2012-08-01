@@ -1,5 +1,14 @@
 #!/usr/bin/perl
 
+#
+# tt - Simple GTD Time Tracking
+#
+# author:  James Hunt <james@niftylogic.com>
+# created: 2012-07-31
+#
+# Copyright (c) 2012 James Hunt <james@niftylogic.com>
+#
+
 use warnings;
 use strict;
 
@@ -8,9 +17,8 @@ use Date::Parse qw(str2time);
 use YAML qw(LoadFile);
 use Data::Dumper; sub dumpit { print Dumper(\@_); }
 
-our $TT_FILE = "$ENV{HOME}/.timetrack";
-if ($ENV{TTDEV}) { $TT_FILE = "./.timetrack" }
 our $VERSION = "1.0";
+our $TT_FILE;
 
 my %DAYS = (
 	Sun => 0, Mon => 1, Tue => 2, Wed => 3,
@@ -298,6 +306,7 @@ GetOptions(\%opt,
 	'range|r=s',
 	'prompt',
 	'keywords|k',
+	'ttfile|T=s',
 ) or usage(1);
 
 sub print_lines
@@ -389,7 +398,7 @@ eval { $CFG = LoadFile("$ENV{HOME}/.ttrc"); } unless $CFG;
 eval { $CFG = LoadFile("/etc/tt.conf"); } unless $CFG;
 $CFG = {} unless $CFG;
 
-$TT_FILE = $CFG->{ttfile} || "$ENV{HOME}/.timetrack";
+$TT_FILE = $opt{ttfile} || $CFG->{ttfile} || "$ENV{HOME}/.timetrack";
 
 if ($opt{prompt}) {
 	my $since;
