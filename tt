@@ -289,9 +289,9 @@ GetOptions(\%opt,
 	'full|f',
 	'date|d=s',
 	'edit|e',
-	'sync',        # NOT IMPL
+	'sync',
 	'mark|M',
-	'config|C',    # NOT IMPL
+	'config|C=s',
 	'kill|x',
 	'week|w',
 	'month|m',
@@ -417,8 +417,14 @@ if (exists $opt{date}) {
 }
 
 if ($opt{sync}) {
-	print STDERR "warning: sync is not implemented yet.\n";
-	exit 1;
+	my $dest = $CFG->{sync}
+		or die "No 'sync' destination found in configuration file\n";
+
+	$dest =~ s/%u/$ENV{USER}/;
+	my $cmd = qq(rsync -e ssh $TT_FILE $dest);
+	print "Syncing to $dest\n";
+	debug("via `$cmd`");
+	exec "/bin/sh -c '$cmd && echo \"Sync complete!\"'";
 }
 
 my $keywords = undef;
