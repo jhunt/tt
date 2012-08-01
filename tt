@@ -224,7 +224,6 @@ Getopt::Long::Configure("bundling");
 sub debug1
 {
 	map { print STDERR "DEBUG> $_\n" } @_;
-	print STDERR "\n";
 }
 sub debug0 { }
 
@@ -425,7 +424,7 @@ if ($opt{sync}) {
 my $keywords = undef;
 if ($opt{keywords}) {
 	$keywords = $CFG->{keywords};
-	print "Using keywords: ".join(', ', @$keywords)."\n";
+	debug("Using keywords: ".join(',', @$keywords));
 }
 
 # Date range of summary
@@ -505,7 +504,7 @@ sub _print_breakout_line
 if ($opt{breakout}) {
 	$opt{summary} = 1;
 
-	print rjust("$from - $to\n", 45);
+	print rjust("$from - $to\n", 51);
 	print "\n";
 	print " Date          P     p     i     t     a      ALL\n";
 	print "--------------------------------------------------\n";
@@ -544,13 +543,13 @@ if ($opt{breakout}) {
 		}
 	}
 
-	print "--------------------------------------------------\n";
 	if (keys %$subt) {
+		print "==================================================\n";
 		for my $k (keys %$subt) {
 			_print_breakout_line("  Subtotal:", $subt->{$k}, $sums->{$k}, $k);
 		}
-		print "--------------------------------------------------\n";
 	}
+	print "--------------------------------------------------\n";
 	_print_breakout_line("     Total:", $total, $S);
 	print "--------------------------------------------------\n";
 	print "               P     p     i     t     a      ALL\n";
