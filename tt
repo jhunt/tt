@@ -48,18 +48,17 @@ sub prev_weekday
 {
 	my ($date, $target) = @_;
 
-	my $ts = $_[0];
-	if ($ts !~ m/^\d+$/) {
-		$ts = str2time($ts);
+	if ($date !~ m/^\d+$/) {
+		$date = str2time($date);
 	}
-	my $wday = strftime("%a", localtime($ts));
+	my $wday = strftime("%a", localtime($date));
 	return unless exists $DAYS{$wday};
 	$wday = $DAYS{$wday};
 
 	my $offset = $target - $wday;
 	$offset -= 7 if $offset > 0;
 
-	return mkdate($ts + (86400*$offset));
+	return mkdate($date + (86400*$offset));
 }
 
 sub skip_dst
@@ -90,6 +89,30 @@ sub expand_date_range
 	}
 	push @dates, $end;
 	return \@dates;
+}
+
+sub month_range
+{
+	my (undef, undef, undef, $d, $m, $y) = localtime(str2time($_[0]));
+	$y += 1900; $m += 1;
+	my $from = mkdate($y, $m, 1);
+	if ($m == 12) { $y++; $m = 1; }
+	else {                $m++;   }
+	return $from, mkdate(str2time("$y/$m/01") - 86400);
+}
+
+sub year_range
+{
+	my (undef, undef, undef, undef, undef, $y) = localtime(str2time($_[0]));
+	return mkdate($y+1900, 1, 1),
+	       mkdate($y+1900, 12, 31);
+}
+
+sub ytd_range
+{
+	my (undef, undef, undef, undef, undef, $y, undef, $yday) = localtime(str2time($_[0]));
+	$y += 1900;
+	return parse_date_range("$y-01-01:+$yday");
 }
 
 sub parse_date_range
@@ -173,11 +196,11 @@ sub parse_date
 
 sub track
 {
-	my ($date, $type, $time, $comment) = @_;
+	my ($date, $project, $time, $comment) = @_;
 	$comment =~ s/\n/.  /;
-	open TT, ">>", $TT_FILE or die "$TT_FILE: $!\n";
-	print TT "$date $type ", sprintf("%3i", $time), " $comment\n";
-	close TT;
+	open my $fh, ">>", $TT_FILE or die "$TT_FILE: $!\n";
+	printf $fh "%s  %12s  %3i  %s\n", $date, $project, $time, $comment;
+	close $fh;
 }
 
 sub extract
@@ -198,28 +221,13 @@ sub extract
 
 sub sum_totals
 {
-	my ($lines, $keywords) = @_;
-	$keywords = undef unless $keywords && @$keywords;
-
+	my ($lines) = @_;
 	my $total = {};
 
 	LINE:
 	for (@$lines) {
-		next unless m/^\d\d\d\d-\d\d-\d\d\s+(.)\s+(\d+)/;
-		next unless $2 > 0;
-		my ($type, $num) = ($1, $2);
-		if ($keywords) {
-			for my $k (@$keywords) {
-				if (m/\s$k\s/) {
-					$total->{$k}{$type} += $num;
-					next LINE;
-				}
-			}
-			$total->{'*'}{$type} += $num;
-
-		} else {
-			$total->{$type} += $num;
-		}
+		next unless m/^\d\d\d\d-\d\d-\d\d\s+(\S+)\s+(\d+)/;
+		$total->{$1} += $2;
 	}
 	return $total;
 }
@@ -248,12 +256,13 @@ sub help
 {
 	print <<EOF;
 tt - dead-simple time tracking
-Copyright (c) 2012 James Hunt <james\@niftylogic.com>
-Based on the 'no magic' attitude of Russ Crandall
+Copyright © 2017 James Hunt
 
 Basic Usage:
-  tt [TYPE] [MINUTES] [COMMENT]
-  tt
+  tt [PROJECT] [MINUTES] [COMMENT]
+  tt -x
+  tt -s week
+  tt -sf mtd
 
 Advanced Usage:
   tt [OPTIONS]
@@ -266,7 +275,7 @@ Advanced Usage:
       Report tracked time in a date range or named
       reporting period.
 
-      Periods:   day, week, mtd
+      Periods:   day, week, month, mtd, year, ytd
       Arbitrary: YYYY-MM-DD:YYYY-MM-DD
                  YYYY-MM-DD:+N
                  YYYY-MM-DD:DD
@@ -277,13 +286,23 @@ Advanced Usage:
   --date, -d YYYY-MM-DD
       Use specified date as reference point.
 
-  --sync
-      Synchronize time tracked data to central server.
-      Requires more infrastructure and some config.
+  --kill, -x
+      Reset the counter on `tt project s ...`
+
+  --prompt
+      Print a small summary of what `tt project s ...`
+      will track (suitable for embedding in a prompt).
+
+  --edit, -e
+      Open the time tracking database in your \$EDITOR.
 
   --config, -C /path/to/tt.conf
       Use alternate configuration file.
       Default is ~/.ttrc, then /etc/tt.conf
+
+  --ttfile, -T /path/to/ttdb
+      Use alternate tt database file.
+      Defaults to ~/.timetrack
 
 EOF
 }
@@ -293,19 +312,12 @@ GetOptions(\%opt,
 	'help|h',
 	'debug|v',     # undocumented
 	'summary|s',
-	'breakout|b',
 	'full|f',
 	'date|d=s',
 	'edit|e',
-	'sync',
-	'mark|M',
-	'config|C=s',
 	'kill|x',
-	'week|w',
-	'month|m',
-	'range|r=s',
 	'prompt',
-	'keywords|k',
+	'config|C=s',
 	'ttfile|T=s',
 ) or usage(1);
 
@@ -313,68 +325,30 @@ sub print_lines
 {
 	my $lines = shift;
 	for (@$lines) {
-		print "$_\n";
+		my ($date, $project, $time, @rest) = split /\s+/;
+		printf "%s  %12s  %3i  %s\n", $date, $project, $time, join(' ', @rest);
 	}
 	print "\n" if @$lines;
 }
 
-sub _print_totals_line_bare
-{
-	print sprintf("%4s: %6i %6.1fh   %s\n",
-		$_[0], $_[1], $_[1]/60.0, $_[2] || '');
-}
-
-sub print_totals_bare
-{
-	my ($total) = @_;
-
-	print " Type    Min     Hrs  \n";
-	print "---------------------\n";
-	my $sum = 0;
-	for my $k (keys %$total) {
-		if (ref($total->{$k}) eq 'HASH') {
-			for my $k2 (keys %{$total->{$k}}) {
-				_print_totals_line_bare($k2, $total->{$k}, $k);
-				$sum += $total->{$k}{$k2};
-			}
-		} else {
-			_print_totals_line_bare($k, $total->{$k}, undef);
-			$sum += $total->{$k};
-		}
-	}
-	print "---------------------\n";
-	print sprintf(" Sum: %6i %6.1fh\n",
-		$sum, $sum/60.0);
-}
-
-sub _print_totals_line
-{
-	print sprintf("%4s: %6i %6.1fh  %6.2f%%   %s\n",
-		$_[0], $_[1], $_[1]/60.0, $_[1]*100.0/$_[2], $_[3] || '');
-}
-
 sub print_totals
 {
-	my ($total, $expected) = @_;
-	return print_totals_bare($total) unless $expected;
+	my ($total, $rates) = @_;
 
-	print " Type    Min     Hrs        %\n";
-	print "-----------------------------\n";
+	printf "     Project    Time    Hours |    \$\$\$.\$\$\n";
+	printf "-------------------------------------------\n";
 	my $sum = 0;
+	my $tbil = 0;
 	for my $k (keys %$total) {
-		if (ref($total->{$k}) eq 'HASH') {
-			for my $k2 (keys %{$total->{$k}}) {
-				_print_totals_line($k2, $total->{$k}{$k2}, $expected, $k);
-				$sum += $total->{$k}{$k2};
-			}
-		} else {
-			_print_totals_line($k, $total->{$k}, $expected, undef);
-			$sum += $total->{$k};
-		}
+		my $n = $total->{$k};
+		my $h = $n/60.0;
+		my $bill = $rates->{$k} ? sprintf("%9.2lf", $h*$rates->{$k}) : '      -  ';
+		printf "%12s  %6i  %6.1fh | %s u\n", $k, $n, $h, $bill;
+		$sum  += $n;
+		$tbil += $h*$rates->{$k} if $rates->{$k};
 	}
-	print "-----------------------------\n";
-	print sprintf(" Sum: %6i %6.1fh  %6.2f%% (of %0.1fh)\n",
-		$sum, $sum/60.0, $sum*100.0/$expected, $expected/60.0);
+	printf "-------------------------------------------\n";
+	printf "       TOTAL  %6i  %6.1fh | %9.2lf\n", $sum, $sum/60.0, $tbil;
 }
 
 *debug = $opt{debug} ? \&debug1 : \&debug0;
@@ -397,6 +371,7 @@ if ($opt{config}) {
 eval { $CFG = LoadFile("$ENV{HOME}/.ttrc"); } unless $CFG;
 eval { $CFG = LoadFile("/etc/tt.conf"); } unless $CFG;
 $CFG = {} unless $CFG;
+debug("CFG:", Dumper($CFG));
 
 $TT_FILE = $opt{ttfile} || $CFG->{ttfile} || "$ENV{HOME}/.timetrack";
 
@@ -407,11 +382,8 @@ if ($opt{prompt}) {
 }
 
 exec '/bin/sh -c "$EDITOR '.$TT_FILE.'"' if $opt{edit};
-exec "/bin/touch $TT_FILE" if $opt{kill};
-
-if ($opt{mark}) {
-	my $comment = join(" ", @ARGV);
-	track(mkdate(time), "a", 0, "ttmark: $comment");
+if ($opt{kill}) {
+	utime(undef, undef, $TT_FILE);
 	exit 0;
 }
 
@@ -425,55 +397,39 @@ if (exists $opt{date}) {
 	$opt{date} = mkdate(time);
 }
 
-if ($opt{sync}) {
-	my $dest = $CFG->{sync}
-		or die "No 'sync' destination found in configuration file\n";
-
-	$dest =~ s/%u/$ENV{USER}/;
-	my $cmd = qq(rsync -e ssh $TT_FILE $dest);
-	print "Syncing to $dest\n";
-	debug("via `$cmd`");
-	exec "/bin/sh -c '$cmd && echo \"Sync complete!\"'";
-}
-
-my $keywords = undef;
-if ($opt{keywords}) {
-	$keywords = $CFG->{keywords};
-	debug("Using keywords: ".join(',', @$keywords));
-}
-
-# Date range of summary
-my ($from, $to);
-
-# Process named summation periods
-#
-my $period = "custom";
-my $expect = undef;
-if ($opt{month}) {
-	$period = "month";
-	$opt{date} =~ m/(\d+)$/;
-	my $mday = $1-1;
-	($from, $to) = parse_date_range("$opt{date}:-$mday");
-
-} elsif ($opt{week}) {
-	$period = "week";
-	$expect = 2400; # minutes in a 40h week
-	my $prev = prev_weekday($opt{date}, $DAYS{$CFG->{weekstart} || 'Sun'})
-		or die "Cannot determine Sunday before $opt{date}\n";
-	($from, $to) = parse_date_range("$prev:+6");
-
-} elsif ($opt{range}) {
-	($from, $to) = parse_date_range($opt{range});
-
-} else {
-	$expect = 480; # minutes in an 8 hour day
-	($from, $to) = ($opt{date}, $opt{date});
-}
-
-debug("summary period is $period");
-debug("from: $from", "to:   $to");
-
 if ($opt{summary}) {
+	my ($from, $to); # Date range of summary
+
+	# Process named summation periods
+	my $period = $ARGV[0] || 'today';
+	if ($period eq 'month') {
+		($from, $to) = month_range($opt{date});
+
+	} elsif ($period eq 'mtd' or $period eq 'm') {
+		$opt{date} =~ m/(\d+)$/;
+		my $mday = $1-1;
+		($from, $to) = parse_date_range("$opt{date}:-$mday");
+
+	} elsif ($period eq 'year') {
+		($from, $to) = year_range($opt{date});
+
+	} elsif ($period eq 'ytd' or $period eq 'y') {
+		($from, $to) = ytd_range($opt{date});
+
+	} elsif ($period eq 'week' or $period eq 'w') {
+		my $prev = prev_weekday($opt{date}, $DAYS{$CFG->{weekstart} || 'Sun'})
+			or die "Cannot determine Sunday before $opt{date}\n";
+		($from, $to) = parse_date_range("$prev:+6");
+
+	} else {
+		($from, $to) = parse_date_range($period);
+		if (!$from || !$to) {
+			($from, $to) = ($opt{date}, $opt{date});
+		}
+	}
+
+	debug("summary period is $period");
+	debug("from: $from", "to:   $to");
 
 	print "Time Tracking Report\n";
 	if ($from eq $to) {
@@ -486,7 +442,7 @@ if ($opt{summary}) {
 
 	my $grand_total = {};
 	for my $date (@$dates) {
-		my $total = sum_totals($log->{$date}, $keywords);
+		my $total = sum_totals($log->{$date});
 		for my $k (keys %$total) {
 			if (ref($total->{$k}) eq 'HASH') {
 				for my $k2 (keys %{$total->{$k}}) {
@@ -498,76 +454,7 @@ if ($opt{summary}) {
 		}
 		print_lines($log->{$date}) if $opt{full};
 	}
-	print_totals($grand_total, $expect);
-	exit 0;
-}
-
-sub bnum
-{
-	my $t = shift;
-	return " - " if !$t or $t < 3;
-	return sprintf("%.1f", ($t||0)/60.0);
-}
-
-sub _print_breakout_line
-{
-	print sprintf("%-11s %5s %5s %5s %5s %5s %7s   %s\n",
-		$_[0], bnum($_[1]->{P}), bnum($_[1]->{p}), bnum($_[1]->{i}),
-		       bnum($_[1]->{t}), bnum($_[1]->{a}), bnum($_[2]), $_[3] || '');
-}
-
-if ($opt{breakout}) {
-	$opt{summary} = 1;
-
-	print rjust("$from - $to\n", 51);
-	print "\n";
-	print " Date          P     p     i     t     a      ALL\n";
-	print "--------------------------------------------------\n";
-
-	my $dates = expand_date_range($from, $to);
-	my $log = extract(match_date_range($from, $to));
-
-	my $total = {};
-	my $subt  = {}; # only if we have $keywords...
-	my $sums = {};  # only if we have $keywords...
-	my $S = 0;
-	for my $date (@$dates) {
-		my $T = sum_totals($log->{$date}, $keywords);
-		my $sum = 0;
-		for my $k (keys %$T) {
-			if (ref($T->{$k}) eq 'HASH') {
-				$sum = 0;
-				for my $k2 (keys %{$T->{$k}}) {
-					$total->{$k2}    += $T->{$k}{$k2};
-					$subt->{$k}{$k2} += $T->{$k}{$k2};
-					$sums->{$k}      += $T->{$k}{$k2};
-					$sum             += $T->{$k}{$k2};
-					$S               += $T->{$k}{$k2};
-				}
-				_print_breakout_line($date, $T->{$k}, $sum, $k);
-			} else {
-				$total->{$k} += $T->{$k};
-				$sum += $T->{$k};
-				$S   += $T->{$k};
-			}
-		}
-		if ($opt{keywords}) { # have to print empty line for lazy day...
-			_print_breakout_line($date, undef, 0, undef) unless $sum;
-		} else {
-			_print_breakout_line($date, $T, $sum, undef);
-		}
-	}
-
-	if (keys %$subt) {
-		print "==================================================\n";
-		for my $k (keys %$subt) {
-			_print_breakout_line("  Subtotal:", $subt->{$k}, $sums->{$k}, $k);
-		}
-	}
-	print "--------------------------------------------------\n";
-	_print_breakout_line("     Total:", $total, $S);
-	print "--------------------------------------------------\n";
-	print "               P     p     i     t     a      ALL\n";
+	print_totals($grand_total, $CFG->{rates});
 	exit 0;
 }
 
@@ -577,7 +464,7 @@ debug(map { "argv[]: $_" } @ARGV);
 if (@ARGV == 0) {
 	my $lines = extract("^($opt{date})\\s");
 	print_lines($lines->{$opt{date}}) if !$opt{summary} || $opt{full};
-	print_totals(sum_totals($lines->{$opt{date}}, $keywords), 480);
+	print_totals(sum_totals($lines->{$opt{date}}), $CFG->{rates});
 	print "\n";
 
 	my $since = time_stat;
@@ -585,17 +472,11 @@ if (@ARGV == 0) {
 	exit 0;
 
 } elsif (@ARGV >= 3) {
-	my ($type, $time_s, @rest) = @ARGV;
+	my ($project, $time_s, @rest) = @ARGV;
 	my $comment = join(" ", @rest);
 
-	if ($type !~ m/^[Ppita]$/) {
-		print "Oops... bad task type ($type)\nChoose one of:\n";
-		print "  P  PTO\n";
-		print "  p  Project\n";
-		print "  i  Incident\n";
-		print "  t  Task\n";
-		print "  a  Admin\n";
-		print "\n";
+	if (parse_time($project)) {
+		print "Oops... '$project' looks like a time spec;\nDid you forget the project argument? (it comes first)\n";
 		exit 1;
 	}
 
@@ -604,7 +485,7 @@ if (@ARGV == 0) {
 		die "$time_s: does not look like a valid time spec\n";
 	}
 
-	track($opt{date}, $type, $time, $comment);
+	track($opt{date}, $project, $time, $comment);
 	exit 0;
 
 } else {

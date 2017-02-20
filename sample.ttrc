@@ -1,10 +1,7 @@
-sync: tt.example.com
 weekstart: Sun
-keywords:
-  - :project
-  - :tt
-  - :test
-  - :sales
-  - :sysad
+rates:
+  project: 190 &default
+  proj2: *default
+  proj3: *default
 
 # vim:ts=2:sts=2:sw=2:et:ft=yaml
